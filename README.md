@@ -219,4 +219,4 @@ the file (or update `url`+`sha256`), bump `programs.cider.version`, and
 ## Acknowledgements
 
 - [Cider Collective](https://cider.sh) for the client.
-- Nixpkgs' `appimageTools` (`wrapType2` + `extractType2`) does the heavy lifting.
+- Nixpkgs' `appimageTools` (`wrapType2` + `extract`) does the heavy lifting.

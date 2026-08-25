@@ -38,7 +38,7 @@ let
         lib.mkCider pkgs { src = ./cider-linux-x64.AppImage; }
     '';
 
-  contents = appimageTools.extractType2 {
+  contents = appimageTools.extract {
     inherit pname version;
     src = resolvedSrc;
   };
