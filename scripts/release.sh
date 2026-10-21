@@ -27,6 +27,21 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# Fail before doing anything if the tools the chosen mode needs are missing,
+# rather than half-way through with "gh: command not found".
+missing=()
+for tool in git jq; do
+  command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
+done
+if $push; then
+  command -v gh >/dev/null 2>&1 || missing+=(gh)
+fi
+if [ ${#missing[@]} -gt 0 ]; then
+  echo "release.sh: missing required tool(s): ${missing[*]}" >&2
+  echo "release.sh: run it as \`nix run .#release\`, which provides them." >&2
+  exit 1
+fi
+
 sources_file=$(find_sources_file)
 repo_root=${sources_file%/"$SOURCES_REL"}
 cd "$repo_root"
@@ -51,8 +66,7 @@ if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; the
 fi
 
 release_exists=false
-if $push && command -v gh >/dev/null 2>&1 \
-   && gh release view "$tag" >/dev/null 2>&1; then
+if $push && gh release view "$tag" >/dev/null 2>&1; then
   release_exists=true
 fi
 

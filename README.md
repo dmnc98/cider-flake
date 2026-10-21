@@ -232,9 +232,10 @@ Two workflows call it, because one cannot cover both cases:
 
 - **`update.yml`** tags its own bumps directly, since a push made with
   `GITHUB_TOKEN` deliberately does not trigger other workflows.
-- **`tag.yml`** covers pins that change by hand. It runs on pushes to `main`
-  that touch `pkgs/cider/sources.json`, so editing the pin yourself still
-  produces a tag.
+- **`tag.yml`** covers pins that change by hand. It runs on every push to
+  `main` — since the script is idempotent, that costs nothing when the tag
+  already exists, and it means a pinned version that somehow has no tag gets
+  one on the next push rather than waiting for the pin to change.
 
 If you roll the pin *back* to a version that was already tagged, `release.sh`
 fails rather than moving the tag — one version cannot mean two commits. Delete

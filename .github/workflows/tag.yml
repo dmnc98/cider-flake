@@ -1,5 +1,11 @@
-# Keeps the repo's tags in sync with the pinned Cider version for changes that
-# arrive by hand. Tags track Cider's own version: 4.0.17 -> v4.0.17.
+# Reconciles the repo's tags with the pinned Cider version. Tags track Cider's
+# own version: 4.0.17 -> v4.0.17.
+#
+# Runs on *every* push to main, not just ones touching sources.json. release.sh
+# is idempotent, so this costs nothing when the tag already exists — and it
+# makes the workflow self-healing: if main is ever left with a pinned version
+# that has no tag, the next push fixes it. A paths filter would instead wait for
+# the pin to change, which is exactly when it is least needed.
 #
 # The update bot tags its own commits inside update.yml, because a push made
 # with GITHUB_TOKEN deliberately does not trigger other workflows — so this
@@ -9,7 +15,6 @@ name: tag
 on:
   push:
     branches: [main]
-    paths: ["pkgs/cider/sources.json"]
   workflow_dispatch:
     inputs:
       dry_run:
