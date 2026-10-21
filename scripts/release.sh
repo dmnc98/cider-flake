@@ -70,24 +70,37 @@ if $push && gh release view "$tag" >/dev/null 2>&1; then
   release_exists=true
 fi
 
-if $tag_local; then
-  tagged_sha=$(git rev-parse -q --verify "refs/tags/$tag^{commit}")
-  if [ "$tagged_sha" != "$sha" ]; then
-    echo "release.sh: $tag already points at $tagged_sha, not $sha." >&2
-    echo "release.sh: refusing to move an existing tag. Delete it first if that is really what you want." >&2
-    exit 1
+# A tag marks the commit that first packaged this Cider version, so once main
+# moves on the tag legitimately lags HEAD — forever. The only question here is
+# whether the tag exists at all; comparing it against HEAD would fail on every
+# later push.
+if $tag_local || $tag_remote; then
+  if $tag_local; then
+    tagged_sha=$(git rev-parse -q --verify "refs/tags/$tag^{commit}")
+    # Not an ancestor means something unusual (a rolled-back pin, a force
+    # push), worth saying out loud — but not worth failing over, since the tag
+    # is still a truthful record of where that version was first packaged.
+    if ! git merge-base --is-ancestor "$tagged_sha" "$sha" 2>/dev/null; then
+      echo "release.sh: note: $tag points at $tagged_sha, which is not an ancestor of $sha." >&2
+      echo "release.sh: note: leaving it alone. Delete the tag if it really should move." >&2
+    fi
   fi
+
+  if ! $push || { $tag_remote && $release_exists; }; then
+    echo "release.sh: $tag is already published, nothing to do"
+    emit "created=false"
+    exit 0
+  fi
+
+  # Tag exists but is not fully published yet: finish the job below without
+  # creating or moving anything.
+  echo "release.sh: $tag exists; reconciling remote tag and release"
+else
+  echo "release.sh: $tag -> $sha (systems: $systems)"
 fi
 
-if $tag_local && { ! $push || { $tag_remote && $release_exists; }; }; then
-  echo "release.sh: $tag is already published, nothing to do"
-  emit "created=false"
-  exit 0
-fi
-
-echo "release.sh: $tag -> $sha (systems: $systems)"
 if $dry_run; then
-  $tag_local    || echo "release.sh: would create tag $tag"
+  { $tag_local || $tag_remote; } || echo "release.sh: would create tag $tag"
   if $push; then
     $tag_remote     || echo "release.sh: would push $tag to origin"
     $release_exists || echo "release.sh: would create release $tag"
@@ -98,7 +111,7 @@ fi
 
 # --- tag --------------------------------------------------------------------
 
-if ! $tag_local; then
+if ! $tag_local && ! $tag_remote; then
   # Annotated tags need an identity; fall back to the Actions bot in CI.
   tag_args=()
   if ! git config user.email >/dev/null; then

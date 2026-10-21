@@ -237,9 +237,12 @@ Two workflows call it, because one cannot cover both cases:
   already exists, and it means a pinned version that somehow has no tag gets
   one on the next push rather than waiting for the pin to change.
 
-If you roll the pin *back* to a version that was already tagged, `release.sh`
-fails rather than moving the tag — one version cannot mean two commits. Delete
-the tag deliberately if that is really what you want.
+A tag marks the commit that *first* packaged that Cider version, so it falls
+behind `main` as soon as anything else lands — that is normal, and `release.sh`
+only ever asks whether the tag exists, never whether it matches `HEAD`. It
+never moves or rewrites one. If a tag turns out not to be an ancestor of `main`
+(a rolled-back pin, a force push) it says so and carries on, since the tag is
+still a truthful record of where that version was first packaged.
 
 ### `.github/workflows/ci.yml`
 
