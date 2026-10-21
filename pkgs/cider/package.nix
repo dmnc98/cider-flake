@@ -8,7 +8,7 @@
   glibc,
   patchelf,
   autoPatchelfHook,
-  makeWrapper,
+  makeShellWrapper,
   wrapGAppsHook3,
   gsettings-desktop-schemas,
   dconf,
@@ -74,7 +74,11 @@ stdenv.mkDerivation (finalAttrs: {
   nativeBuildInputs = [
     dpkg
     autoPatchelfHook
-    makeWrapper
+    # Deliberately the *shell* wrapper, and invoked by its unambiguous name
+    # below: wrapGAppsHook3 propagates makeBinaryWrapper, whose `makeWrapper`
+    # shadows the shell one and would pass the conditional Wayland flags
+    # through as literal text, since a C wrapper does no shell expansion.
+    makeShellWrapper
     wrapGAppsHook3
   ];
 
@@ -123,7 +127,7 @@ stdenv.mkDerivation (finalAttrs: {
       sandboxArgs+=(--add-flags "--no-sandbox --disable-gpu-sandbox")
     ''}
 
-    makeWrapper $out/lib/cider/Cider $out/bin/cider \
+    makeShellWrapper $out/lib/cider/Cider $out/bin/cider \
       "''${gappsWrapperArgs[@]}" \
       "''${sandboxArgs[@]}" \
       --add-flags "\''${NIXOS_OZONE_WL:+\''${WAYLAND_DISPLAY:+--ozone-platform-hint=auto --enable-features=WaylandWindowDecorations --enable-wayland-ime=true}}" \
@@ -208,6 +212,19 @@ stdenv.mkDerivation (finalAttrs: {
             || { echo "FAIL: desktop Exec does not point at the wrapper" >&2; fail=1; }
           grep -qx 'Icon=cider' "$cider/share/applications/cider.desktop" \
             || { echo "FAIL: desktop Icon does not match the installed icon" >&2; fail=1; }
+
+          echo "== bin/cider is a shell wrapper, so the ozone flags expand =="
+          # makeBinaryWrapper, which wrapGAppsHook3 propagates, compiles the
+          # wrapper to C and performs no shell expansion: the conditional
+          # ''${NIXOS_OZONE_WL:+...} would reach Electron as literal text and
+          # Cider would silently never get the Wayland flags.
+          if head -n1 "$cider/bin/cider" | grep -q '^#!'; then
+            grep -q 'NIXOS_OZONE_WL:+' "$cider/bin/cider" \
+              || { echo "FAIL: the wrapper lost the NIXOS_OZONE_WL conditional" >&2; fail=1; }
+          else
+            echo "FAIL: bin/cider is not a shell wrapper (makeShellWrapper shadowed again?)" >&2
+            fail=1
+          fi
 
           echo "== the Electron bundle is intact =="
           # Cider ignores --version and just launches, so the binary is never
