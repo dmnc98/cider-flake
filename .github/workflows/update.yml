@@ -177,38 +177,7 @@ jobs:
       - name: Tag and release
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.discover.outputs.version }}
-          OLD_VERSION: ${{ needs.discover.outputs.old-version }}
-          CHANGELOG: ${{ needs.discover.outputs.changelog }}
-          SYSTEMS: ${{ needs.discover.outputs.systems }}
-        run: |
-          tag="v${VERSION}"
-          if gh release view "$tag" >/dev/null 2>&1; then
-            echo "release $tag already exists, nothing to do"
-            exit 0
-          fi
-
-          notes=$(cat <<EOF
-          Packages **Cider ${VERSION}**, pinned from Cider Collective's public
-          APT pool at [repo.cider.sh](https://repo.cider.sh/apt/pool/main/).
-
-          - Upstream changelog: ${CHANGELOG}
-          - Systems: \`${SYSTEMS}\`
-          - Previous pin: \`${OLD_VERSION}\`
-
-          Cider is proprietary. This flake only repackages the openly published
-          Linux build — you still enter your own license inside the app after
-          installing it.
-
-          \`\`\`nix
-          inputs.cider.url = "github:${GITHUB_REPOSITORY}/${tag}";
-          \`\`\`
-          EOF
-          )
-
-          git tag -a "$tag" -m "cider ${VERSION}"
-          git push origin "$tag"
-          gh release create "$tag" --title "Cider ${VERSION}" --notes "$notes"
+        run: ./scripts/release.sh --push
 
       - name: Summary
         run: |

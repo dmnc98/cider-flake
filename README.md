@@ -185,8 +185,8 @@ Runs every six hours, and on demand. Three gated jobs:
 2. **build** — the rewritten pin is built for real on `ubuntu-24.04` *and*
    `ubuntu-24.04-arm`, then the output tree is asserted (wrapper is executable,
    desktop file and icon are in place, no unresolved libraries).
-3. **publish** — only now does it commit `cider: <old> -> <new>` to `main`, push
-   a `v<version>` tag and cut a GitHub release linking the upstream changelog.
+3. **publish** — only now does it commit `cider: <old> -> <new>` to `main`, then
+   hand off to `scripts/release.sh` to tag and release it.
 
 So a version that doesn't build never reaches `main`, and consumers can pin
 either a tag or `main`.
@@ -207,12 +207,45 @@ publish nothing).
   workflows, so `ci.yml` does not re-run on the bot's own commits. The update
   workflow has already built them.
 
+### Tags
+
+Tags track Cider's own version, with a `v` prefix — Cider 4.0.17 is `v4.0.17`.
+Each one carries a GitHub release linking that version's upstream changelog, so
+a tag is a pin you can point an input at:
+
+```nix
+inputs.cider.url = "github:dmnc98/cider-flake/v4.0.17";
+```
+
+`scripts/release.sh` creates them, and is idempotent — it never moves an
+existing tag and never rewrites an existing release, so it is safe to run on
+every push:
+
+```sh
+nix run .#release                 # create the local tag only
+nix run .#release -- --push       # also push it and cut the release
+nix run .#release -- --dry-run    # report what it would do
+nix run .#release -- --ref <rev>  # tag <rev> instead of HEAD
+```
+
+Two workflows call it, because one cannot cover both cases:
+
+- **`update.yml`** tags its own bumps directly, since a push made with
+  `GITHUB_TOKEN` deliberately does not trigger other workflows.
+- **`tag.yml`** covers pins that change by hand. It runs on pushes to `main`
+  that touch `pkgs/cider/sources.json`, so editing the pin yourself still
+  produces a tag.
+
+If you roll the pin *back* to a version that was already tagged, `release.sh`
+fails rather than moving the tag — one version cannot mean two commits. Delete
+the tag deliberately if that is really what you want.
+
 ### `.github/workflows/ci.yml`
 
 Runs on every push and PR: formatting, `shellcheck`, `nix flake show
---all-systems`, a dry-run of the updater (which fails loudly if upstream changes
-its layout), real builds on both architectures, and an evaluation of both
-modules.
+--all-systems`, dry-runs of the updater (which fails loudly if upstream changes
+its layout) and of the release script, real builds on both architectures, and an
+evaluation of both modules.
 
 ### Doing it by hand
 
@@ -233,6 +266,7 @@ re-running it on an up-to-date tree produces no diff.
 | `packages.<system>.cider` / `.default` | the wrapped Cider |
 | `checks.<system>.cider`, `.cider-startup` | build + unresolved-library check |
 | `apps.<system>.update` | bump `sources.json` (needs a checkout) |
+| `apps.<system>.release` | tag the pinned version, cut its release |
 | `apps.<system>.hash` | print SRI hashes for a given version |
 | `nixosModules.default` / `.cider` | `programs.cider.*` for NixOS |
 | `homeManagerModules.default` / `.cider` | `programs.cider.*` for Home Manager |

@@ -1,0 +1,54 @@
+# Keeps the repo's tags in sync with the pinned Cider version for changes that
+# arrive by hand. Tags track Cider's own version: 4.0.17 -> v4.0.17.
+#
+# The update bot tags its own commits inside update.yml, because a push made
+# with GITHUB_TOKEN deliberately does not trigger other workflows — so this
+# cannot be the only place tagging happens.
+name: tag
+
+on:
+  push:
+    branches: [main]
+    paths: ["pkgs/cider/sources.json"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Report what would be tagged, create nothing"
+        type: boolean
+        default: false
+
+concurrency:
+  group: cider-tag
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  tag:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # release.sh compares the existing tag's target against HEAD, so it
+          # needs real history rather than a shallow clone.
+          fetch-depth: 0
+
+      - name: Tag the pinned Cider version
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ./scripts/release.sh --push ${{ inputs.dry_run && '--dry-run' || '' }}
+
+      - name: Summary
+        run: |
+          {
+            if [ "${{ steps.release.outputs.created }}" = "true" ]; then
+              echo "### Tagged \`${{ steps.release.outputs.tag }}\`"
+            else
+              echo "### \`${{ steps.release.outputs.tag }}\` was already published"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

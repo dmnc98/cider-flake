@@ -32,7 +32,11 @@
           )
         );
 
-      updateDeps = pkgs: [
+      # Copied as a directory, not file-by-file, so the scripts can source
+      # their shared lib.sh from alongside themselves under `nix run`.
+      scripts = ./scripts;
+
+      scriptDeps = pkgs: [
         pkgs.bash
         pkgs.coreutils
         pkgs.curl
@@ -41,6 +45,9 @@
         pkgs.gnused
         pkgs.jq
       ];
+
+      # `release` additionally talks to the GitHub API.
+      releaseDeps = pkgs: scriptDeps pkgs ++ [ pkgs.gh ];
     in
     {
       lib.mkCider = pkgs: args: pkgs.callPackage ./pkgs/cider/package.nix args;
@@ -78,8 +85,8 @@
             meta.description = "Bump pkgs/cider/sources.json to the latest Cider release";
             program = toString (
               pkgs.writeShellScript "cider-update" ''
-                export PATH=${nixpkgs.lib.makeBinPath (updateDeps pkgs)}:$PATH
-                exec ${./scripts/update.sh} "$@"
+                export PATH=${nixpkgs.lib.makeBinPath (scriptDeps pkgs)}:$PATH
+                exec ${scripts}/update.sh "$@"
               ''
             );
           };
@@ -92,7 +99,7 @@
             program = toString (
               pkgs.writeShellScript "cider-hash" ''
                 set -eu
-                export PATH=${nixpkgs.lib.makeBinPath (updateDeps pkgs)}:$PATH
+                export PATH=${nixpkgs.lib.makeBinPath (scriptDeps pkgs)}:$PATH
                 if [ $# -ne 1 ]; then
                   echo "usage: nix run .#hash -- <version>   (e.g. 4.0.17)" >&2
                   exit 64
@@ -112,6 +119,19 @@
             );
           };
 
+          # `nix run .#release -- --push` — tag the pinned version and cut the
+          # matching GitHub release. Idempotent; CI runs this too.
+          release = {
+            type = "app";
+            meta.description = "Tag the pinned Cider version and cut its GitHub release";
+            program = toString (
+              pkgs.writeShellScript "cider-release" ''
+                export PATH=${nixpkgs.lib.makeBinPath (releaseDeps pkgs)}:$PATH
+                exec ${scripts}/release.sh "$@"
+              ''
+            );
+          };
+
           # Deliberately no `apps.default`: it would shadow
           # `packages.<system>.default`, so `nix run <flake>` would start the
           # updater instead of Cider.
@@ -121,7 +141,7 @@
       devShells = forSystems devSystems (
         _system: pkgs: {
           default = pkgs.mkShellNoCC {
-            packages = updateDeps pkgs ++ [
+            packages = releaseDeps pkgs ++ [
               pkgs.nixfmt
               pkgs.shellcheck
             ];

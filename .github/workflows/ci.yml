@@ -28,14 +28,17 @@ jobs:
       - name: Check formatting
         run: nix develop --command sh -c 'nixfmt --check $(git ls-files "*.nix")' 
 
-      - name: Shellcheck the updater
-        run: nix develop --command shellcheck scripts/update.sh
+      - name: Shellcheck the maintenance scripts
+        run: nix develop --command shellcheck -x scripts/*.sh
 
       - name: Evaluate every flake output
         run: nix flake show --all-systems
 
       - name: Updater still finds the upstream pool
         run: nix run .#update -- --dry-run
+
+      - name: Release script agrees with the pin
+        run: nix run .#release -- --dry-run
 
   build:
     strategy:
