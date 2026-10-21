@@ -1,0 +1,14 @@
+{
+  "version": "4.0.17",
+  "urlTemplate": "https://repo.cider.sh/apt/pool/main/cider-v@version@-linux-@debArch@.deb",
+  "platforms": {
+    "x86_64-linux": {
+      "debArch": "x64",
+      "hash": "sha256-CanpS0yydWOkGKp/8SIVSJ7EavFUs9xBxUgmL9AUXJU="
+    },
+    "aarch64-linux": {
+      "debArch": "arm64",
+      "hash": "sha256-HA68YE3z08yFg+1OETondI44ysT/PKjRmntObS+nTe4="
+    }
+  }
+}

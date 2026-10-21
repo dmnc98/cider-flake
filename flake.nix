@@ -1,79 +1,132 @@
 {
-  description = "Cider (Apple Music client) packaged for NixOS from a Taproom AppImage.";
+  description = "Cider 4 (Apple Music client) packaged for NixOS from Cider Collective's public APT repository.";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
   };
 
-  outputs = { self, nixpkgs, ... }:
+  outputs =
+    { self, nixpkgs, ... }:
     let
-      supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
+      sources = builtins.fromJSON (builtins.readFile ./pkgs/cider/sources.json);
 
-      forSystems = f: nixpkgs.lib.genAttrs supportedSystems
-        (system: f system (import nixpkgs { inherit system; config.allowUnfree = true; }));
+      # Systems Cider itself ships a .deb for.
+      ciderSystems = builtins.attrNames sources.platforms;
+      # Systems this flake's dev shell / scripts are available on.
+      devSystems = [
+        "x86_64-linux"
+        "aarch64-linux"
+        "x86_64-darwin"
+        "aarch64-darwin"
+      ];
 
-      mkCider = pkgs: args: pkgs.callPackage ./cider.nix args;
+      forSystems =
+        systems: f:
+        nixpkgs.lib.genAttrs systems (
+          system:
+          f system (
+            import nixpkgs {
+              inherit system;
+              config.allowUnfree = true;
+            }
+          )
+        );
+
+      updateDeps = pkgs: [
+        pkgs.bash
+        pkgs.coreutils
+        pkgs.curl
+        pkgs.git
+        pkgs.gnugrep
+        pkgs.gnused
+        pkgs.jq
+      ];
     in
     {
-      lib = { inherit mkCider; };
+      lib.mkCider = pkgs: args: pkgs.callPackage ./pkgs/cider/package.nix args;
 
       overlays.default = final: _prev: {
-        cider = args: mkCider final args;
+        cider = final.callPackage ./pkgs/cider/package.nix { };
       };
 
-      nixosModules.default = import ./nixos-module.nix self;
+      nixosModules.default = import ./modules/nixos.nix self;
       nixosModules.cider = self.nixosModules.default;
 
-      homeManagerModules.default = import ./hm-module.nix self;
+      homeManagerModules.default = import ./modules/home-manager.nix self;
       homeManagerModules.cider = self.homeManagerModules.default;
 
-      packages = forSystems (system: pkgs: {
-        # No default `cider` package: a source must be supplied. See `lib.mkCider`
-        # or the NixOS / Home Manager modules. `nix build .#default` prints help.
-        default = pkgs.writeShellScriptBin "cider-flake-help" ''
-          cat <<'EOF'
-          This flake packages Cider from a Taproom AppImage. It cannot fetch
-          the AppImage itself (Cloudflare blocks Nix sandbox fetches).
+      packages = forSystems ciderSystems (
+        _system: pkgs: rec {
+          cider = pkgs.callPackage ./pkgs/cider/package.nix { };
+          default = cider;
+        }
+      );
 
-          Build it from your own flake / config like:
+      checks = forSystems ciderSystems (
+        system: _pkgs: {
+          cider = self.packages.${system}.cider;
+          cider-startup = self.packages.${system}.cider.tests.startup;
+        }
+      );
 
-            # flake.nix
-            inputs.cider.url = "path:/home/you/git/cider-flake";
+      apps = forSystems devSystems (
+        system: pkgs: {
+          # `nix run .#update` — bump pkgs/cider/sources.json to the newest
+          # release in Cider's public pool. This is what CI runs.
+          update = {
+            type = "app";
+            meta.description = "Bump pkgs/cider/sources.json to the latest Cider release";
+            program = toString (
+              pkgs.writeShellScript "cider-update" ''
+                export PATH=${nixpkgs.lib.makeBinPath (updateDeps pkgs)}:$PATH
+                exec ${./scripts/update.sh} "$@"
+              ''
+            );
+          };
 
-            # configuration.nix (NixOS)
-            imports = [ inputs.cider.nixosModules.default ];
-            programs.cider.enable = true;
-            programs.cider.source = /etc/nixos/cider/cider-linux-x64.AppImage;
+          # `nix run .#hash -- 4.0.16` — SRI hashes for an arbitrary version,
+          # for pinning a build other than the one this flake tracks.
+          hash = {
+            type = "app";
+            meta.description = "Print SRI hashes of a given Cider version's .deb files";
+            program = toString (
+              pkgs.writeShellScript "cider-hash" ''
+                set -eu
+                export PATH=${nixpkgs.lib.makeBinPath (updateDeps pkgs)}:$PATH
+                if [ $# -ne 1 ]; then
+                  echo "usage: nix run .#hash -- <version>   (e.g. 4.0.17)" >&2
+                  exit 64
+                fi
+                for pair in x86_64-linux:x64 aarch64-linux:arm64; do
+                  system=''${pair%%:*}
+                  arch=''${pair##*:}
+                  url="https://repo.cider.sh/apt/pool/main/cider-v$1-linux-$arch.deb"
+                  if ! curl -fsI "$url" >/dev/null 2>&1; then
+                    echo "$system	(no $arch build for $1)"
+                    continue
+                  fi
+                  printf '%s\t%s\n' "$system" \
+                    "$(nix store prefetch-file --json --hash-type sha256 "$url" | jq -r .hash)"
+                done
+              ''
+            );
+          };
 
-            # home.nix (Home Manager)
-            imports = [ inputs.cider.homeManagerModules.default ];
-            programs.cider.enable = true;
-            programs.cider.source = /home/you/cider/cider-linux-x64.AppImage;
+          default = self.apps.${system}.update;
+        }
+      );
 
-          Compute a sha256 for the url+sha256 variant:
-            nix run .#hash -- /path/to/cider-linux-x64.AppImage
-          EOF
-        '';
-      });
+      devShells = forSystems devSystems (
+        _system: pkgs: {
+          default = pkgs.mkShellNoCC {
+            packages = updateDeps pkgs ++ [
+              pkgs.nixfmt
+              pkgs.shellcheck
+            ];
+          };
+        }
+      );
 
-      apps = forSystems (system: pkgs: {
-        # Helper that prints the sha256 of a Cider AppImage you've already
-        # downloaded, so you can paste it into the module config.
-        hash = {
-          type = "app";
-          program = toString (pkgs.writeShellScript "cider-hash" ''
-            set -eu
-            if [ $# -ne 1 ]; then
-              echo "usage: nix run .#hash -- /path/to/cider-linux-x64.AppImage" >&2
-              exit 64
-            fi
-            sri=$(${pkgs.nix}/bin/nix --extra-experimental-features nix-command \
-              hash file --type sha256 "$1")
-            echo "sha256 (SRI):    $sri"
-            echo "sha256 (base32): $(${pkgs.nix}/bin/nix --extra-experimental-features nix-command \
-              hash convert --hash-algo sha256 --to nix32 "$sri")"
-          '');
-        };
-      });
+      formatter = forSystems devSystems (_system: pkgs: pkgs.nixfmt);
     };
 }

@@ -1,222 +1,266 @@
 # cider-flake
 
-A Nix flake that packages [Cider](https://cider.sh) (Apple Music client, v2+) from
-its Linux AppImage and exposes it as a NixOS module and a Home Manager module.
+A Nix flake that packages [Cider](https://cider.sh) 4 — the proprietary Apple
+Music client — straight from Cider Collective's **public** Linux repository, and
+exposes it as a package, an overlay, a NixOS module and a Home Manager module.
 
-## Why this flake doesn't download Cider for you
-
-Cider 2/3/4 is distributed exclusively through https://taproom.cider.sh, which:
-
-- Is fully behind Cloudflare's JS challenge — every endpoint returns HTTP 403
-  to non-browser clients. The Nix sandbox has no JS engine, so `fetchurl` /
-  `builtins.fetchurl` cannot get past it.
-- Requires a Taproom account to authorise the download.
-- Ships a proprietary client whose download API isn't publicly documented.
-
-So this flake follows the standard NixOS pattern for gated binaries (NVIDIA
-installers, Microsoft fonts, etc.): **you download the AppImage once from
-Taproom in a browser, and the flake wraps it.**
-
-## What you get
-
-- `lib.mkCider` — a function `pkgs → args → derivation` that wraps an AppImage
-  with `appimageTools.wrapType2`, adds `libsecret`/`libnotify` for the Taproom
-  keyring, installs the `.desktop` file, and normalises icon names.
-- `nixosModules.default` — adds `programs.cider.{enable,source,url,sha256,version}`.
-- `homeManagerModules.default` — same options for per-user installs.
-- `overlays.default` — exposes `pkgs.cider args` in any consumer.
-- `apps.hash` — prints SRI and base32 SHA-256 of a downloaded AppImage.
-
-## Picking a source: pure vs. `--impure`
-
-Where you point `programs.cider.source` decides whether you need
-`nixos-rebuild --impure`. Pick whichever fits how your config is laid out.
-
-| Approach                              | Pure? | When to use                                                |
-| ------------------------------------- | :---: | ---------------------------------------------------------- |
-| 1. Relative path inside the flake     |  yes  | Your flake lives next to where you can drop the AppImage.  |
-| 2. `path:` flake input                |  yes  | You want the binary outside your config tree but pinned.   |
-| 3. `url` + `sha256`                   |  yes  | You self-host a mirror Nix can reach.                      |
-| 4. Absolute path outside the flake    |  no   | Quick, but locks you into `--impure`.                      |
-
-Absolute paths into `/nix/store/...` are also rejected in pure mode, so
-`nix store add-path` then pinning the result **does not** dodge `--impure`.
-
-## Quick start (NixOS) — pure, recommended
-
-1. Sign in at https://taproom.cider.sh and download
-   `cider-vX.Y.Z-linux-x64.AppImage`.
-
-2. Put it **inside your flake's source tree**, e.g. `/etc/nixos/cider/`
-   if your `flake.nix` is at `/etc/nixos/flake.nix`. Stage it with git so
-   the flake sees it (`git add cider/cider-v4.0.0-linux-x64.AppImage`).
-
-3. Add the flake to your system `flake.nix`:
-
-   ```nix
-   {
-     inputs.nixpkgs.url   = "github:NixOS/nixpkgs/nixos-unstable";
-     inputs.cider.url     = "path:/home/you/git/cider-flake";  # or github:you/cider-flake
-
-     outputs = { self, nixpkgs, cider, ... }: {
-       nixosConfigurations.myhost = nixpkgs.lib.nixosSystem {
-         system = "x86_64-linux";
-         modules = [
-           ./configuration.nix
-           cider.nixosModules.default
-         ];
-       };
-     };
-   }
-   ```
-
-4. In `configuration.nix` use a **relative path**:
-
-   ```nix
-   { ... }: {
-     nixpkgs.config.allowUnfree = true;
-
-     programs.cider.enable  = true;
-     programs.cider.source  = ./cider/cider-v4.0.0-linux-x64.AppImage;
-     programs.cider.version = "4.0.0";
-   }
-   ```
-
-5. `sudo nixos-rebuild switch` — no `--impure` needed.
-
-### Approach 2: `path:` flake input (binary outside the config tree)
-
-If you don't want the 155 MB AppImage in your config repo, point a
-`flake = false` input at a directory that contains it:
+A bot watches upstream and republishes this flake whenever Cider ships a new
+version, so `nix flake update` is all you need to upgrade.
 
 ```nix
-# your system flake.nix
-inputs.cider-binary = {
-  url   = "path:/var/lib/cider";   # directory that contains the AppImage
-  flake = false;
-};
+programs.cider.enable = true;   # that's it
+```
 
-# configuration.nix
-{ inputs, ... }: {
-  programs.cider.source = "${inputs.cider-binary}/cider-v4.0.0-linux-x64.AppImage";
+## What changed, and why this flake got simpler
+
+Cider used to be download-gated: every build lived behind
+[Taproom](https://taproom.cider.sh), which is Cloudflare-challenged and
+account-bound, so `fetchurl` inside the Nix sandbox could never reach it. The
+old version of this flake therefore refused to download anything — you fetched
+the AppImage in a browser and pointed the flake at the file.
+
+Cider has since inverted that model. The Linux build is now published openly at
+**<https://repo.cider.sh>** (an APT pool plus an RPM tree), and the paywall moved
+*after* installation: you install freely and enter a license inside the app.
+Nothing in the download path is authenticated any more.
+
+That means this flake can do what a flake should — fetch, pin and build by
+itself. The `source` / `url` + `sha256` dance is gone.
+
+> Cider is still proprietary and still needs a paid license plus an active Apple
+> Music subscription. This flake only repackages the openly published binary; it
+> does not circumvent licensing, and it ships no credentials.
+
+## Install
+
+Add the input:
+
+```nix
+# flake.nix
+{
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    cider.url = "github:dmnc98/cider-flake";
+    cider.inputs.nixpkgs.follows = "nixpkgs";
+  };
 }
 ```
 
-The directory is hashed into `flake.lock`, so eval stays pure. Re-run
-`nix flake lock --update-input cider-binary` after dropping a new AppImage
-in there.
-
-### Approach 4: absolute path (requires `--impure`)
+### NixOS
 
 ```nix
-programs.cider.source = /etc/nixos/cider/cider-v4.0.0-linux-x64.AppImage;
-# sudo nixos-rebuild switch --impure
+# configuration.nix
+{ inputs, ... }:
+{
+  imports = [ inputs.cider.nixosModules.default ];
+
+  nixpkgs.config.allowUnfree = true;
+  programs.cider.enable = true;
+}
 ```
 
-Works, but pure mode will refuse it because the file lives outside the
-flake's source tree.
-
-## Quick start (Home Manager)
-
-Same pure approaches apply — put the AppImage in your dotfiles flake or
-use a `path:` input:
+### Home Manager
 
 ```nix
 # home.nix
-{ inputs, ... }: {
+{ inputs, ... }:
+{
   imports = [ inputs.cider.homeManagerModules.default ];
 
   nixpkgs.config.allowUnfree = true;
-
-  programs.cider.enable  = true;
-  programs.cider.source  = ./cider/cider-v4.0.0-linux-x64.AppImage;  # inside the flake
-  programs.cider.version = "4.0.0";
+  programs.cider.enable = true;
 }
 ```
 
-## Using a URL instead of a local path
-
-If you mirror the AppImage on storage Nix can reach without a JS challenge
-(your own server, S3 bucket, etc.):
+### Without a module
 
 ```nix
-programs.cider.url    = "https://my-mirror.example/cider-v4.0.0-linux-x64.AppImage";
-programs.cider.sha256 = "sha256-mXiQvIXFeWQIzrILDKddq+b+hoE26SbSStDzaqQk+Z0=";
+# via the overlay
+nixpkgs.overlays = [ inputs.cider.overlays.default ];
+environment.systemPackages = [ pkgs.cider ];
 ```
 
-Compute the hash with the bundled helper:
+```nix
+# or directly
+environment.systemPackages = [ inputs.cider.packages.${pkgs.system}.cider ];
+```
+
+### Just try it
 
 ```sh
-nix run path:/home/you/git/cider-flake#hash -- ~/Downloads/cider-v4.0.0-linux-x64.AppImage
-# sha256 (SRI):    sha256-mXiQvIXFeWQIzrILDKddq+b+hoE26SbSStDzaqQk+Z0=
-# sha256 (base32): 17gr4jj6mwyh9b92ds9nh63gxrmbbnkhq2xjrq468yf5hny90y4r
-```
-
-Either format is accepted by `programs.cider.sha256`.
-
-## Using it directly (no module)
-
-```nix
-{ pkgs, cider, ... }: {
-  environment.systemPackages = [
-    (cider.lib.mkCider pkgs {
-      src     = /etc/nixos/cider/cider-v4.0.0-linux-x64.AppImage;
-      version = "4.0.0";
-    })
-  ];
-}
-```
-
-Or via the overlay:
-
-```nix
-nixpkgs.overlays = [ cider.overlays.default ];
-environment.systemPackages = [
-  (pkgs.cider { src = /etc/nixos/cider/cider-v4.0.0-linux-x64.AppImage; version = "4.0.0"; })
-];
+nix run github:dmnc98/cider-flake
 ```
 
 ## Module options
 
-| Option                 | Type           | Default      | Notes                                                          |
-| ---------------------- | -------------- | ------------ | -------------------------------------------------------------- |
-| `programs.cider.enable`  | `bool`         | `false`      | Adds Cider to `environment.systemPackages` / `home.packages`.  |
-| `programs.cider.source`  | `path \| null` | `null`       | Local AppImage path. Mutually exclusive with `url`+`sha256`.   |
-| `programs.cider.url`     | `str \| null`  | `null`       | URL of the AppImage. Requires `sha256`.                        |
-| `programs.cider.sha256`  | `str \| null`  | `null`       | SRI (`sha256-…`) or base32 hash of the file at `url`.          |
-| `programs.cider.version` | `str`          | `"unstable"` | Cosmetic version label baked into the derivation name.         |
-| `programs.cider.package` | `package`      | derived      | Read-only; the resulting wrapped derivation.                   |
+| Option | Type | Default | Notes |
+| --- | --- | --- | --- |
+| `programs.cider.enable` | `bool` | `false` | Adds Cider to `environment.systemPackages` / `home.packages`. |
+| `programs.cider.version` | `str` | the pinned version | Any version still in the upstream pool. Needs `hash` if it isn't the pinned one. |
+| `programs.cider.hash` | `str \| null` | `null` | SRI hash of the `.deb`. Only for overriding `version` or `url`. |
+| `programs.cider.url` | `str \| null` | `null` | Fetch the `.deb` from a mirror instead. Requires `hash`. |
+| `programs.cider.src` | `path \| null` | `null` | Use a `.deb` already on disk. Wins over `version`/`url`. |
+| `programs.cider.disableSandbox` | `bool` | `true` | Passes `--no-sandbox --disable-gpu-sandbox`. See [Sandboxing](#sandboxing). |
+| `programs.cider.package` | `package` | derived | Override to swap the package wholesale. |
 
-You must set either `source` **or** both `url` and `sha256`; otherwise the
-assertion (or, if forced, the `mkCider` throw) tells you what's missing.
+Pinning an older release:
 
-## Signing in to Taproom
+```sh
+nix run github:dmnc98/cider-flake#hash -- 4.0.16
+# x86_64-linux   sha256-…
+# aarch64-linux  sha256-…
+```
 
-The OAuth/itch.io flow is broken on Linux
-([ciderapp/Cider-2#1152](https://github.com/ciderapp/Cider-2/issues/1152)).
-Workaround:
+```nix
+programs.cider.version = "4.0.16";
+programs.cider.hash = "sha256-…";   # the one matching your system
+```
 
-1. Log into https://taproom.cider.sh in a browser.
-2. Copy a license key from https://taproom.cider.sh/licenses.
-3. In Cider, choose **Enter Taproom Token Manually** and paste it.
+## How the package is built
 
-The wrapper bundles `libsecret`, so the token persists in your desktop keyring.
+Cider's `.deb` is a stock electron-builder bundle, so the derivation follows the
+nixpkgs convention for prebuilt Electron apps:
 
-## Upgrading
+- `dpkg-deb` unpacks it; `usr/lib/cider` and `usr/share` move into `$out`.
+- `autoPatchelfHook` rewrites the bundled Electron against nixpkgs' `gtk3`,
+  `nss`, `alsa-lib`, `libgbm`, `libsecret` and `libnotify`.
+- `libGL` goes in via `appendRunpaths` rather than `runtimeDependencies`, because
+  ANGLE `dlopen`s `libEGL.so.1` from inside `libGLESv2.so` — a shared library,
+  whose RPATH `runtimeDependencies` does not touch.
+- `makeWrapper` adds the GTK/GSettings/dconf environment and Wayland flags
+  gated on `NIXOS_OZONE_WL`.
+- The shipped `cider.desktop` already says `Exec=cider` / `Icon=cider`, which
+  matches the wrapper, so only the icon is relocated into `hicolor`.
 
-Each new Cider release is a new AppImage. Download it from Taproom, replace
-the file (or update `url`+`sha256`), bump `programs.cider.version`, and
-`nixos-rebuild switch`.
+`nix build .#checks.<system>.cider-startup` asserts that no shared library is
+left unresolved after patching.
 
-## Limitations
+### Sandboxing
 
-- `x86_64-linux` only (no Cider AppImage for `aarch64-linux` upstream).
-- Marked unfree (`licenses.unfree`) — set `nixpkgs.config.allowUnfree = true;`.
-- No automatic update channel; you upgrade by replacing the source.
-- Sandboxing flags are inherited from the AppImage; if Electron complains
-  about chrome-sandbox, run `cider --no-sandbox` once to confirm and report.
+The `.deb` ships `chrome-sandbox`, Electron's setuid sandbox helper. A Nix store
+path can never be setuid root, and Electron refuses to start when the helper is
+present but misconfigured — so the wrapper passes `--no-sandbox
+--disable-gpu-sandbox` by default.
+
+If you'd rather keep Chromium's sandbox, set `programs.cider.disableSandbox =
+false` and arrange a setuid helper yourself (e.g. via
+`security.chromiumSuidSandbox.enable`). Cider will not launch with the default
+store-path helper otherwise.
+
+### Licensing Cider
+
+Install, launch Cider, and sign in. If the Taproom OAuth flow misbehaves on
+Linux, copy a key from <https://taproom.cider.sh/licenses> and use **Enter
+Taproom Token Manually**. The package bundles `libsecret`, so the token persists
+in your desktop keyring.
+
+## The publishing cycle
+
+`pkgs/cider/sources.json` is the single source of truth — a version plus one SRI
+hash per system. Everything else derives from it, including `meta.platforms` and
+`meta.changelog`.
+
+```json
+{
+  "version": "4.0.17",
+  "urlTemplate": "https://repo.cider.sh/apt/pool/main/cider-v@version@-linux-@debArch@.deb",
+  "platforms": {
+    "x86_64-linux": { "debArch": "x64",   "hash": "sha256-…" },
+    "aarch64-linux": { "debArch": "arm64", "hash": "sha256-…" }
+  }
+}
+```
+
+### `.github/workflows/update.yml`
+
+Runs every six hours, and on demand. Three gated jobs:
+
+1. **discover** — scrapes the nginx autoindex at
+   <https://repo.cider.sh/apt/pool/main/>, picks the highest version (`sort -V`,
+   so `4.0.9.1` sorts correctly) that has an `x86_64` build, prefetches an SRI
+   hash for every architecture that exists for it, and rewrites
+   `sources.json`. Architectures without a `.deb` are dropped rather than
+   guessed, so `meta.platforms` never lies. If the pin is already current it
+   emits `updated=false` and the run stops here.
+2. **build** — the rewritten pin is built for real on `ubuntu-24.04` *and*
+   `ubuntu-24.04-arm`, then the output tree is asserted (wrapper is executable,
+   desktop file and icon are in place, no unresolved libraries).
+3. **publish** — only now does it commit `cider: <old> -> <new>` to `main`, push
+   a `v<version>` tag and cut a GitHub release linking the upstream changelog.
+
+So a version that doesn't build never reaches `main`, and consumers can pin
+either a tag or `main`.
+
+Manual dispatch takes three inputs: `version` (pin a specific release),
+`force` (rebuild/republish the current pin) and `dry_run` (discover and build,
+publish nothing).
+
+**What the bot needs from the repository:**
+
+- `ubuntu-24.04-arm` runners, which are free for public repositories only. On a
+  private repo, either add a paid ARM runner or drop `aarch64-linux` from the
+  matrix and from `SYSTEMS` in `scripts/update.sh`.
+- No branch protection or ruleset on `main` that would reject a push from
+  `GITHUB_TOKEN`. The default workflow permission can stay read-only — the
+  publish job requests `contents: write` for itself.
+- Note that a push made with `GITHUB_TOKEN` deliberately does not trigger other
+  workflows, so `ci.yml` does not re-run on the bot's own commits. The update
+  workflow has already built them.
+
+### `.github/workflows/ci.yml`
+
+Runs on every push and PR: formatting, `shellcheck`, `nix flake show
+--all-systems`, a dry-run of the updater (which fails loudly if upstream changes
+its layout), real builds on both architectures, and an evaluation of both
+modules.
+
+### Doing it by hand
+
+```sh
+nix run .#update              # bump sources.json to the newest release
+nix run .#update -- --dry-run # report only
+nix run .#update -- --version 4.0.16
+```
+
+It rewrites `sources.json` in the checkout it is run from (found via `git
+rev-parse`, overridable with `CIDER_FLAKE_ROOT`), and it is byte-stable:
+re-running it on an up-to-date tree produces no diff.
+
+## Flake outputs
+
+| Output | |
+| --- | --- |
+| `packages.<system>.cider` / `.default` | the wrapped Cider |
+| `checks.<system>.cider`, `.cider-startup` | build + unresolved-library check |
+| `apps.<system>.update` | bump `sources.json` (also `apps.<system>.default`) |
+| `apps.<system>.hash` | print SRI hashes for a given version |
+| `nixosModules.default` / `.cider` | `programs.cider.*` for NixOS |
+| `homeManagerModules.default` / `.cider` | `programs.cider.*` for Home Manager |
+| `overlays.default` | adds `pkgs.cider` |
+| `lib.mkCider` | `pkgs -> args -> derivation`, for full control |
+| `devShells.default`, `formatter` | updater deps, `nixfmt` |
+
+`x86_64-linux` and `aarch64-linux` are packaged; the apps and dev shell also
+evaluate on Darwin so you can run the updater from a Mac.
+
+## Notes and limitations
+
+- Unfree, so `nixpkgs.config.allowUnfree = true` is required.
+- Upstream's APT `Packages` index is currently empty — only the pool itself is
+  populated. The updater therefore reads the directory listing, not the index.
+  If Cider ever fixes the index, switching to it would be strictly better.
+- The pool lags the storefronts: cider.sh may advertise a version that
+  `repo.cider.sh` hasn't published yet. The bot tracks the pool, which is the
+  only publicly fetchable source.
+- `aarch64` builds exist from 4.0.16 onward; earlier versions are `x86_64`-only.
+- Cider ignores `--version` and simply launches, so the startup check inspects
+  the linker rather than running the binary.
 
 ## Acknowledgements
 
-- [Cider Collective](https://cider.sh) for the client.
-- Nixpkgs' `appimageTools` (`wrapType2` + `extract`) does the heavy lifting.
+- [Cider Collective](https://cider.sh) for the client, and for opening up the
+  Linux download.
+- nixpkgs' [`cider-2`](https://github.com/NixOS/nixpkgs/tree/master/pkgs/by-name/ci/cider-2)
+  package and [`ciderapp/sh.cider.Cider`](https://github.com/ciderapp/sh.cider.Cider)
+  Flatpak manifest, which independently confirmed the `.deb` layout and the
+  `libGL` / sandbox quirks.
