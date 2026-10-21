@@ -112,7 +112,9 @@
             );
           };
 
-          default = self.apps.${system}.update;
+          # Deliberately no `apps.default`: it would shadow
+          # `packages.<system>.default`, so `nix run <flake>` would start the
+          # updater instead of Cider.
         }
       );
 

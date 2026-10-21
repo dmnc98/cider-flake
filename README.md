@@ -232,7 +232,7 @@ re-running it on an up-to-date tree produces no diff.
 | --- | --- |
 | `packages.<system>.cider` / `.default` | the wrapped Cider |
 | `checks.<system>.cider`, `.cider-startup` | build + unresolved-library check |
-| `apps.<system>.update` | bump `sources.json` (also `apps.<system>.default`) |
+| `apps.<system>.update` | bump `sources.json` (needs a checkout) |
 | `apps.<system>.hash` | print SRI hashes for a given version |
 | `nixosModules.default` / `.cider` | `programs.cider.*` for NixOS |
 | `homeManagerModules.default` / `.cider` | `programs.cider.*` for Home Manager |

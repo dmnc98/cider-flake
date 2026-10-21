@@ -23,20 +23,38 @@ declare -A ARCHES=(
 # An update is only published when every system listed here has a .deb.
 REQUIRED_SYSTEMS=(x86_64-linux)
 
-# Resolve the repo root. Under `nix run .#update` the script itself lives in
-# the store, so $0 is useless — prefer the git checkout we were invoked from.
-if [ -n "${CIDER_FLAKE_ROOT:-}" ]; then
-  repo_root=$CIDER_FLAKE_ROOT
-elif repo_root=$(git rev-parse --show-toplevel 2>/dev/null) && [ -n "$repo_root" ]; then
-  :
-else
-  repo_root=$(CDPATH="" cd -- "$(dirname -- "$0")/.." && pwd)
-fi
+# Resolve the repo root. Under `nix run` this script lives in the store, so $0
+# is useless — prefer the checkout we were invoked from. Each candidate has to
+# actually contain the pin, so we never write to an unrelated directory.
+sources_rel="pkgs/cider/sources.json"
+sources_file=
+for candidate in \
+  "${CIDER_FLAKE_ROOT:-}" \
+  "$(git rev-parse --show-toplevel 2>/dev/null || true)" \
+  "$(CDPATH="" cd -- "$(dirname -- "$0")/.." 2>/dev/null && pwd || true)"; do
+  if [ -n "$candidate" ] && [ -f "$candidate/$sources_rel" ]; then
+    sources_file="$candidate/$sources_rel"
+    break
+  fi
+done
 
-sources_file="$repo_root/pkgs/cider/sources.json"
-if [ ! -f "$sources_file" ]; then
-  echo "update.sh: $sources_file not found." >&2
-  echo "update.sh: run this from a cider-flake checkout, or set CIDER_FLAKE_ROOT." >&2
+if [ -z "$sources_file" ]; then
+  cat >&2 <<'EOM'
+update.sh: could not find pkgs/cider/sources.json.
+
+This script rewrites a cider-flake checkout, so it needs one. Either:
+
+  git clone https://github.com/dmnc98/cider-flake && cd cider-flake
+  nix run .#update
+
+or point it at an existing checkout:
+
+  CIDER_FLAKE_ROOT=/path/to/cider-flake nix run github:dmnc98/cider-flake#update
+
+To just install or run Cider you do not need this script at all:
+
+  nix run github:dmnc98/cider-flake
+EOM
   exit 1
 fi
 
